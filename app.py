@@ -1,5 +1,8 @@
 import streamlit as st
 import pandas as pd
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from io import BytesIO
 
 # =============================
 # CONFIGURAÇÃO DA PÁGINA
