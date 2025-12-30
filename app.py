@@ -217,4 +217,13 @@ if st.session_state.user is None:
                 c = conn.cursor()
                 c.execute("SELECT * FROM usuarios WHERE login=?", (u,))
                 row = c.fetchone()
-                if row and check_hashes(
+                if row and check_hashes(s, row[3]):
+                    st.session_state.user = {"id": row[0], "nome": row[1], "role": row[4], "status_pagamento": row[5]}
+                    st.rerun()
+                else: st.error("Credenciais inválidas")
+else:
+    if st.sidebar.button("🚪 Sair"):
+        st.session_state.user = None
+        st.rerun()
+    if st.session_state.user["role"] == "admin": painel_admin()
+    else: painel_aluno()
