@@ -129,6 +129,19 @@ def visualizar_ficha():
         else:
             st.info("Nenhum exercício cadastrado.")
 
+pdf_buffer = gerar_pdf(
+    aluno,
+    dados["objetivo"],
+    dados["treinos"]
+)
+
+st.download_button(
+    label="📄 Baixar ficha em PDF",
+    data=pdf_buffer,
+    file_name=f"ficha_{aluno}.pdf",
+    mime="application/pdf"
+)
+
 # =============================
 # MAIN
 # =============================
