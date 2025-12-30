@@ -17,14 +17,16 @@ def conn():
     return sqlite3.connect("gym.db", check_same_thread=False)
 
 def criar_tabelas():
-    c = conn().cursor()
+    con = conn()
+    c = con.cursor()
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT,
         email TEXT UNIQUE,
-        senha TEXT
+        senha TEXT,
+        role TEXT
     )
     """)
 
@@ -47,7 +49,14 @@ def criar_tabelas():
     )
     """)
 
-    c.connection.commit()
+    # usuário master
+    c.execute("""
+    INSERT OR IGNORE INTO usuarios (nome,email,senha,role)
+    VALUES ('Administrador','admin','admin','master')
+    """)
+
+    con.commit()
+    con.close()
 
 def seed_tipos():
     tipos = ["Costas", "Peito", "Pernas", "Ombro", "Braços", "Abdômen", "Full Body"]
@@ -64,7 +73,7 @@ criar_tabelas()
 seed_tipos()
 
 # =============================
-# LOGIN / CADASTRO
+# LOGIN
 # =============================
 def login():
     st.title("🏋️ GymManager Pro")
@@ -72,7 +81,7 @@ def login():
     tab1, tab2 = st.tabs(["Login", "Cadastro"])
 
     with tab1:
-        email = st.text_input("Email")
+        email = st.text_input("Login / Email")
         senha = st.text_input("Senha", type="password")
         if st.button("Entrar"):
             df = pd.read_sql(
@@ -82,18 +91,17 @@ def login():
             if df.empty:
                 st.error("Credenciais inválidas")
             else:
-                st.session_state.usuario_id = df.iloc[0]["id"]
-                st.session_state.nome = df.iloc[0]["nome"]
+                st.session_state.usuario = df.iloc[0].to_dict()
                 st.rerun()
 
     with tab2:
         nome = st.text_input("Nome")
-        email = st.text_input("Email", key="cad_email")
-        senha = st.text_input("Senha", type="password", key="cad_senha")
+        email = st.text_input("Email")
+        senha = st.text_input("Senha", type="password")
         if st.button("Criar Conta"):
             try:
                 conn().execute(
-                    "INSERT INTO usuarios (nome,email,senha) VALUES (?,?,?)",
+                    "INSERT INTO usuarios (nome,email,senha,role) VALUES (?,?,?,'aluno')",
                     (nome,email,senha)
                 )
                 conn().commit()
@@ -125,7 +133,6 @@ def gerar_pdf(nome, treinos):
                 f"{ex['exercicio']} | {ex['series']}x{ex['repeticoes']} | {ex['carga']}kg"
             )
             y -= 15
-
             if y < 80:
                 pdf.showPage()
                 y = A4[1] - 50
@@ -137,17 +144,15 @@ def gerar_pdf(nome, treinos):
     return buf
 
 # =============================
-# APP
+# TELAS
 # =============================
-def app():
-    st.sidebar.write(f"👤 {st.session_state.nome}")
-
+def tela_aluno():
     st.header("🏋️ Meu Treino")
 
     tipos = pd.read_sql("SELECT nome FROM tipos_treino ORDER BY nome", conn())["nome"].tolist()
 
     tipo = st.selectbox("Tipo de treino", tipos)
-    novo_tipo = st.text_input("Ou criar novo tipo de treino")
+    novo_tipo = st.text_input("Criar novo tipo (opcional)")
 
     if novo_tipo:
         try:
@@ -166,27 +171,49 @@ def app():
         if st.form_submit_button("Adicionar"):
             conn().execute(
                 "INSERT INTO treinos VALUES (NULL,?,?,?,?,?,?)",
-                (st.session_state.usuario_id, tipo, ex, s, r, c)
+                (st.session_state.usuario["id"], tipo, ex, s, r, c)
             )
             conn().commit()
             st.success("Exercício adicionado")
 
     df = pd.read_sql(
         "SELECT tipo_treino, exercicio, series, repeticoes, carga FROM treinos WHERE usuario_id=?",
-        conn(), params=(st.session_state.usuario_id,)
+        conn(), params=(st.session_state.usuario["id"],)
     )
 
     if not df.empty:
         st.dataframe(df, use_container_width=True)
-
         treinos = df.groupby("tipo_treino").apply(lambda x: x.to_dict("records")).to_dict()
-        pdf = gerar_pdf(st.session_state.nome, treinos)
-        st.download_button("📄 Baixar PDF", pdf, "meu_treino.pdf")
+        st.download_button("📄 Baixar PDF", gerar_pdf(st.session_state.usuario["nome"], treinos), "meu_treino.pdf")
+
+def tela_master():
+    st.header("🛠️ Painel do Administrador")
+
+    usuarios = pd.read_sql("SELECT id,nome,email,role FROM usuarios", conn())
+    st.subheader("Usuários")
+    st.dataframe(usuarios, use_container_width=True)
+
+    treinos = pd.read_sql("""
+        SELECT u.nome, t.tipo_treino, t.exercicio, t.series, t.repeticoes, t.carga
+        FROM treinos t
+        JOIN usuarios u ON u.id = t.usuario_id
+    """, conn())
+
+    st.subheader("Treinos cadastrados")
+    st.dataframe(treinos, use_container_width=True)
 
 # =============================
 # MAIN
 # =============================
-if "usuario_id" not in st.session_state:
+if "usuario" not in st.session_state:
     login()
 else:
-    app()
+    st.sidebar.write(f"👤 {st.session_state.usuario['nome']}")
+    if st.sidebar.button("Sair"):
+        st.session_state.clear()
+        st.rerun()
+
+    if st.session_state.usuario["role"] == "master":
+        tela_master()
+    else:
+        tela_aluno()
