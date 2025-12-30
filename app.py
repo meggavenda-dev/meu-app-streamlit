@@ -19,7 +19,59 @@ if "alunos" not in st.session_state:
     st.session_state.alunos = {}
 
 # =============================
-# FUNÇÕES
+# FUNÇÃO PDF
+# =============================
+def gerar_pdf(aluno, objetivo, treinos):
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    largura, altura = A4
+
+    y = altura - 50
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(50, y, "Ficha de Treino")
+    y -= 30
+
+    pdf.setFont("Helvetica", 12)
+    pdf.drawString(50, y, f"Aluno: {aluno}")
+    y -= 20
+    pdf.drawString(50, y, f"Objetivo: {objetivo}")
+    y -= 30
+
+    for treino, exercicios in treinos.items():
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawString(50, y, treino)
+        y -= 20
+
+        pdf.setFont("Helvetica", 10)
+
+        if not exercicios:
+            pdf.drawString(60, y, "Nenhum exercício cadastrado.")
+            y -= 15
+
+        for ex in exercicios:
+            linha = (
+                f"{ex['exercicio']} | "
+                f"Séries: {ex['series']} | "
+                f"Reps: {ex['repeticoes']} | "
+                f"Carga: {ex['carga_kg']}kg"
+            )
+            pdf.drawString(60, y, linha)
+            y -= 15
+
+            if y < 80:
+                pdf.showPage()
+                y = altura - 50
+                pdf.setFont("Helvetica", 10)
+
+        y -= 10
+
+    pdf.save()
+    buffer.seek(0)
+    return buffer
+
+# =============================
+# FUNÇÕES APP
 # =============================
 def cadastrar_aluno():
     st.header("➕ Cadastrar Aluno")
@@ -123,24 +175,26 @@ def visualizar_ficha():
             df = pd.DataFrame(exercicios)
             st.table(df)
 
-            if st.button(f"Limpar {treino}", key=treino):
+            if st.button(f"🗑️ Limpar {treino}", key=treino):
                 st.session_state.alunos[aluno]["treinos"][treino] = []
                 st.rerun()
         else:
             st.info("Nenhum exercício cadastrado.")
 
-pdf_buffer = gerar_pdf(
-    aluno,
-    dados["objetivo"],
-    dados["treinos"]
-)
+    st.divider()
 
-st.download_button(
-    label="📄 Baixar ficha em PDF",
-    data=pdf_buffer,
-    file_name=f"ficha_{aluno}.pdf",
-    mime="application/pdf"
-)
+    pdf_buffer = gerar_pdf(
+        aluno,
+        dados["objetivo"],
+        dados["treinos"]
+    )
+
+    st.download_button(
+        label="📄 Baixar ficha em PDF",
+        data=pdf_buffer,
+        file_name=f"ficha_{aluno}.pdf",
+        mime="application/pdf"
+    )
 
 # =============================
 # MAIN
@@ -165,48 +219,3 @@ def main():
 # =============================
 if __name__ == "__main__":
     main()
-
-def gerar_pdf(aluno, objetivo, treinos):
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=A4)
-    largura, altura = A4
-
-    y = altura - 50
-
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(50, y, "Ficha de Treino")
-    y -= 30
-
-    pdf.setFont("Helvetica", 12)
-    pdf.drawString(50, y, f"Aluno: {aluno}")
-    y -= 20
-    pdf.drawString(50, y, f"Objetivo: {objetivo}")
-    y -= 30
-
-    for treino, exercicios in treinos.items():
-        pdf.setFont("Helvetica-Bold", 12)
-        pdf.drawString(50, y, treino)
-        y -= 20
-
-        pdf.setFont("Helvetica", 10)
-
-        for ex in exercicios:
-            linha = (
-                f"{ex['exercicio']} | "
-                f"Séries: {ex['series']} | "
-                f"Reps: {ex['repeticoes']} | "
-                f"Carga: {ex['carga_kg']}kg"
-            )
-            pdf.drawString(60, y, linha)
-            y -= 15
-
-            if y < 80:
-                pdf.showPage()
-                y = altura - 50
-                pdf.setFont("Helvetica", 10)
-
-        y -= 10
-
-    pdf.save()
-    buffer.seek(0)
-    return buffer
