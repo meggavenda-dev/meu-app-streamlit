@@ -32,10 +32,17 @@ def criar_tabelas():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tipos_treino (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS treinos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             aluno_id INTEGER,
-            treino TEXT,
+            tipo_treino TEXT,
             exercicio TEXT,
             series INTEGER,
             repeticoes TEXT,
@@ -56,7 +63,6 @@ def gerar_pdf(aluno, objetivo, treinos):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     largura, altura = A4
-
     y = altura - 50
 
     pdf.setFont("Helvetica-Bold", 16)
@@ -108,7 +114,6 @@ def cadastrar_aluno():
             "Objetivo",
             ["Hipertrofia", "Emagrecimento", "Condicionamento"]
         )
-
         submitted = st.form_submit_button("Salvar Aluno")
 
         if submitted:
@@ -118,7 +123,6 @@ def cadastrar_aluno():
 
             conn = get_connection()
             cursor = conn.cursor()
-
             try:
                 cursor.execute(
                     "INSERT INTO alunos (nome, objetivo) VALUES (?, ?)",
@@ -133,21 +137,62 @@ def cadastrar_aluno():
 
 # -------------------------------------------------
 
+def cadastrar_tipo_treino():
+    st.header("🏷️ Tipos de Treino")
+
+    with st.form("form_tipo_treino"):
+        nome = st.text_input("Nome do tipo de treino (ex: Costas, Pernas)")
+        submitted = st.form_submit_button("Adicionar")
+
+        if submitted:
+            if not nome:
+                st.error("Informe o nome do tipo.")
+                return
+
+            conn = get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "INSERT INTO tipos_treino (nome) VALUES (?)",
+                    (nome,)
+                )
+                conn.commit()
+                st.success("Tipo de treino cadastrado!")
+            except sqlite3.IntegrityError:
+                st.error("Esse tipo já existe.")
+            finally:
+                conn.close()
+
+    conn = get_connection()
+    df = pd.read_sql("SELECT nome FROM tipos_treino ORDER BY nome", conn)
+    conn.close()
+
+    if not df.empty:
+        st.subheader("Tipos cadastrados")
+        st.dataframe(df, use_container_width=True)
+
+# -------------------------------------------------
+
 def montar_treino():
     st.header("🏋️ Montar Treino")
 
     conn = get_connection()
     alunos = pd.read_sql("SELECT id, nome FROM alunos", conn)
+    tipos = pd.read_sql("SELECT nome FROM tipos_treino", conn)
     conn.close()
 
     if alunos.empty:
         st.warning("Nenhum aluno cadastrado.")
         return
 
+    if tipos.empty:
+        st.warning("Cadastre um tipo de treino primeiro.")
+        return
+
     aluno_nome = st.selectbox("Aluno", alunos["nome"])
     aluno_id = alunos[alunos["nome"] == aluno_nome]["id"].values[0]
 
-    treino_tipo = st.selectbox("Treino", ["Treino A", "Treino B", "Treino C"])
+    tipo_treino = st.selectbox("Tipo de Treino", tipos["nome"])
 
     with st.form("form_treino"):
         col1, col2, col3, col4 = st.columns(4)
@@ -166,15 +211,13 @@ def montar_treino():
 
             conn = get_connection()
             cursor = conn.cursor()
-
             cursor.execute("""
                 INSERT INTO treinos
-                (aluno_id, treino, exercicio, series, repeticoes, carga)
+                (aluno_id, tipo_treino, exercicio, series, repeticoes, carga)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (
-                aluno_id, treino_tipo, exercicio, series, repeticoes, carga
+                aluno_id, tipo_treino, exercicio, series, repeticoes, carga
             ))
-
             conn.commit()
             conn.close()
 
@@ -198,10 +241,10 @@ def visualizar_ficha():
 
     conn = get_connection()
     df = pd.read_sql("""
-        SELECT treino, exercicio, series, repeticoes, carga
+        SELECT tipo_treino, exercicio, series, repeticoes, carga
         FROM treinos
         WHERE aluno_id = ?
-        ORDER BY treino
+        ORDER BY tipo_treino
     """, conn, params=(aluno["id"],))
     conn.close()
 
@@ -213,7 +256,7 @@ def visualizar_ficha():
 
     st.dataframe(df, use_container_width=True)
 
-    treinos_dict = df.groupby("treino").apply(
+    treinos_dict = df.groupby("tipo_treino").apply(
         lambda x: x.to_dict("records")
     ).to_dict()
 
@@ -238,11 +281,13 @@ def main():
 
     menu = st.sidebar.radio(
         "Menu",
-        ["Cadastrar Aluno", "Montar Treino", "Visualizar Ficha"]
+        ["Cadastrar Aluno", "Tipos de Treino", "Montar Treino", "Visualizar Ficha"]
     )
 
     if menu == "Cadastrar Aluno":
         cadastrar_aluno()
+    elif menu == "Tipos de Treino":
+        cadastrar_tipo_treino()
     elif menu == "Montar Treino":
         montar_treino()
     elif menu == "Visualizar Ficha":
