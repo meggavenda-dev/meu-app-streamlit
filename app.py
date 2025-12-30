@@ -3,6 +3,7 @@ import pandas as pd
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from io import BytesIO
+import sqlite3
 
 # =============================
 # CONFIGURAÇÃO DA PÁGINA
@@ -13,14 +14,41 @@ st.set_page_config(
 )
 
 # =============================
-# SESSION STATE
-# =============================
-if "alunos" not in st.session_state:
-    st.session_state.alunos = {}
-
-# =============================
 # FUNÇÃO PDF
 # =============================
+
+def get_connection():
+    return sqlite3.connect("gym.db", check_same_thread=False)
+
+def criar_tabelas():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alunos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE,
+            objetivo TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS treinos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            aluno_id INTEGER,
+            treino TEXT,
+            exercicio TEXT,
+            series INTEGER,
+            repeticoes TEXT,
+            carga REAL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+criar_tabelas()
+
 def gerar_pdf(aluno, objetivo, treinos):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
@@ -74,6 +102,7 @@ def gerar_pdf(aluno, objetivo, treinos):
 # FUNÇÕES APP
 # =============================
 def cadastrar_aluno():
+    
     st.header("➕ Cadastrar Aluno")
 
     with st.form("form_cadastro"):
@@ -94,14 +123,17 @@ def cadastrar_aluno():
                 st.error("Aluno já cadastrado.")
                 return
 
-            st.session_state.alunos[nome] = {
-                "objetivo": objetivo,
-                "treinos": {
-                    "Treino A": [],
-                    "Treino B": [],
-                    "Treino C": []
-                }
-            }
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "INSERT INTO alunos (nome, objetivo) VALUES (?, ?)",
+            (nome, objetivo)
+            )
+
+        conn.commit()
+        conn.close()
+
 
             st.success(f"Aluno {nome} cadastrado com sucesso!")
 
@@ -196,9 +228,20 @@ def visualizar_ficha():
         mime="application/pdf"
     )
 
+def listar_alunos():
+    conn = get_connection()
+    df = pd.read_sql("SELECT * FROM alunos", conn)
+    conn.close()
+    return df
+    
+df = listar_alunos()
+st.dataframe(df)
+
 # =============================
 # MAIN
 # =============================
+
+  
 def main():
     st.title("🏋️ GymManager Pro")
 
