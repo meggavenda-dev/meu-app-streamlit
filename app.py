@@ -10,7 +10,7 @@ import random
 # =============================
 # CONFIGURAÇÃO E ESTILO
 # =============================
-st.set_page_config(page_title="GymManager Pro v6.0", layout="wide", page_icon="💪")
+st.set_page_config(page_title="GymManager Pro v6.1", layout="wide", page_icon="💪")
 
 st.markdown("""
 <style>
@@ -168,7 +168,7 @@ def painel_admin():
                     st.rerun()
 
 # =============================
-# PAINEL DO ALUNO (V6.0)
+# PAINEL DO ALUNO (V6.1)
 # =============================
 def painel_aluno():
     u_id = st.session_state.user["id"]
@@ -179,66 +179,75 @@ def painel_aluno():
         altura_m = st.session_state.user.get("altura", 170) / 100
         imc = peso_atual / (altura_m**2) if peso_atual > 0 else 0
 
+        # Busca histórico para contador
+        res_hist = pd.read_sql("SELECT COUNT(*) as total FROM historico_treinos WHERE usuario_id=?", conn, params=(u_id,))
+        total_treinos = res_hist.iloc[0]['total']
+
         st.title(f"Olá, {st.session_state.user['nome']}! 🔥")
         
-        # Métricas
+        # Métricas Principais
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Meu Peso", f"{peso_atual} kg")
-        m2.metric("Status Conta", st.session_state.user.get("status_pagamento", "Em dia"))
+        m2.metric("Sessões Realizadas", f"{total_treinos}")
         m3.metric("Objetivo", st.session_state.user.get("objetivo", "Saúde"))
         m4.metric("Meu IMC", f"{imc:.1f}")
 
-        tab1, tab2, tab3 = st.tabs(["🏋️ Consultar Treino", "📊 Evolução", "💡 Motivação"])
+        tab1, tab2, tab3, tab4 = st.tabs(["🏋️ Consultar Treino", "📊 Evolução", "🥗 Nutrição", "💡 Motivação"])
         
         with tab1:
             col_data, col_timer = st.columns([2, 1])
             
             with col_data:
+                # Escolha da Data para ver o treino
                 data_sel = st.date_input("Escolha a data", datetime.now())
                 trad_dias = {
                     "Monday": "Segunda-feira", "Tuesday": "Terça-feira", "Wednesday": "Quarta-feira",
                     "Thursday": "Quinta-feira", "Friday": "Sexta-feira", "Saturday": "Sábado", "Sunday": "Domingo"
                 }
                 dia_pt = trad_dias[data_sel.strftime("%A")]
-                st.info(f"Treino de: **{dia_pt}**")
+                st.info(f"Visualizando treino de: **{dia_pt}**")
 
             with col_timer:
-                st.write("⏱️ Descanso")
+                st.write("⏱️ Timer de Descanso")
                 if st.button("Iniciar 60s"):
                     bar = st.progress(0)
                     for i in range(60):
                         time.sleep(1)
                         bar.progress((i + 1) / 60)
-                    st.success("Fim do descanso!")
+                    st.success("Fim do descanso! Próxima série.")
 
             st.divider()
 
-            # Cronômetro de Sessão
+            # Cronômetro de Sessão Real
             if 'timer_start' not in st.session_state: st.session_state.timer_start = None
             ci, cf, cs = st.columns([1, 1, 2])
-            if ci.button("▶️ Iniciar Treino"):
+            if ci.button("▶️ Começar Agora"):
                 st.session_state.timer_start = time.time()
                 st.rerun()
-            if cf.button("⏹️ Finalizar"):
+            if cf.button("⏹️ Finalizar Treino"):
                 if st.session_state.timer_start:
                     dur = int(time.time() - st.session_state.timer_start)
                     conn.execute("INSERT INTO historico_treinos (usuario_id, data, duracao_segundos) VALUES (?,?,?)",
                                  (u_id, datetime.now().strftime("%Y-%m-%d"), dur))
                     conn.commit()
                     st.session_state.timer_start = None
-                    st.success(f"Salvo: {dur//60} min")
-            if st.session_state.timer_start: cs.warning("⏳ Cronômetro ativo")
+                    st.success(f"Salvo com sucesso! Duração: {dur//60} min")
+                    st.rerun()
+            if st.session_state.timer_start: cs.warning("⏳ Cronômetro em andamento...")
 
-            # Lista de Treino
+            # Lista de Treino com Check-in
             df = pd.read_sql("SELECT * FROM treinos WHERE usuario_id=? AND dia_semana=?", conn, params=(u_id, dia_pt))
             if df.empty:
-                st.write("Sem treino para este dia.")
+                st.write("😴 Dia de descanso ou sem treino agendado.")
             else:
-                for _, r in df.iterrows():
+                st.subheader(f"Ficha de {dia_pt}")
+                for index, r in df.iterrows():
                     with st.container(border=True):
-                        st.write(f"**{r['exercicio']}** | {r['series']}x{r['repeticoes']} | {r['carga']}kg")
+                        col_check, col_info = st.columns([1, 9])
+                        col_check.checkbox("Feito", key=f"ex_{r['id']}")
+                        col_info.write(f"**{r['exercicio']}** | {r['series']}x{r['repeticoes']} | {r['carga']}kg")
                         if r['link_video']:
-                            with st.expander("Ver execução"):
+                            with col_info.expander("🎥 Ver execução"):
                                 st.video(r['link_video'])
 
         with tab2:
@@ -252,15 +261,27 @@ def painel_aluno():
             
             df_med = pd.read_sql("SELECT peso, data FROM medidas WHERE usuario_id=? ORDER BY data ASC", conn, params=(u_id,))
             if not df_med.empty:
-                st.plotly_chart(px.line(df_med, x="data", y="peso", markers=True), use_container_width=True)
+                st.plotly_chart(px.line(df_med, x="data", y="peso", markers=True, title="Evolução do Peso"), use_container_width=True)
 
         with tab3:
-            st.subheader("💡 Dicas do Dia")
+            st.subheader("🥤 Sugestão Nutricional")
+            if peso_atual > 0:
+                agua = peso_atual * 35 # 35ml por kg
+                proteina = peso_atual * 2 # 2g por kg para hipertrofia
+                st.success(f"Consumo diário sugerido para seu peso ({peso_atual}kg):")
+                st.write(f"💧 **Água:** {agua/1000:.2f} litros")
+                st.write(f"🥩 **Proteína:** {proteina:.0f}g - {proteina+40:.0f}g")
+                st.caption("Nota: Consulte sempre um nutricionista para um plano personalizado.")
+            else:
+                st.warning("Registre seu peso na aba Evolução para ver os cálculos.")
+
+        with tab4:
+            st.subheader("💡 Dicas e Mentalidade")
             dicas = [
-                "Beba 35ml de água para cada kg de peso.",
-                "O músculo cresce no descanso. Durma 8h!",
-                "Constância vence a intensidade.",
-                "Foque na técnica, depois na carga."
+                "A disciplina te leva onde a motivação não consegue.",
+                "Não compare o seu capítulo 1 com o capítulo 20 de outra pessoa.",
+                "Seu único limite é você mesmo.",
+                "O suor de hoje é a glória de amanhã."
             ]
             st.info(random.choice(dicas))
             st.image("https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800&q=80")
