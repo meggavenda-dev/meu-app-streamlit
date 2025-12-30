@@ -6,36 +6,25 @@ from reportlab.pdfgen import canvas
 from io import BytesIO
 
 # =============================
-# CONFIGURAÇÃO
+# CONFIG
 # =============================
 st.set_page_config("GymManager Pro", layout="wide")
 
 # =============================
 # BANCO
 # =============================
-def get_connection():
+def conn():
     return sqlite3.connect("gym.db", check_same_thread=False)
 
 def criar_tabelas():
-    conn = get_connection()
-    c = conn.cursor()
+    c = conn().cursor()
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT,
         email TEXT UNIQUE,
-        senha TEXT,
-        perfil TEXT
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS alunos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        usuario_id INTEGER,
-        objetivo TEXT,
-        FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+        senha TEXT
     )
     """)
 
@@ -49,7 +38,7 @@ def criar_tabelas():
     c.execute("""
     CREATE TABLE IF NOT EXISTS treinos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        aluno_id INTEGER,
+        usuario_id INTEGER,
         tipo_treino TEXT,
         exercicio TEXT,
         series INTEGER,
@@ -58,185 +47,141 @@ def criar_tabelas():
     )
     """)
 
-    conn.commit()
-    conn.close()
+    c.connection.commit()
+
+def seed_tipos():
+    tipos = ["Costas", "Peito", "Pernas", "Ombro", "Braços", "Abdômen", "Full Body"]
+    con = conn()
+    for t in tipos:
+        try:
+            con.execute("INSERT INTO tipos_treino (nome) VALUES (?)", (t,))
+        except:
+            pass
+    con.commit()
+    con.close()
 
 criar_tabelas()
+seed_tipos()
 
 # =============================
-# LOGIN
+# LOGIN / CADASTRO
 # =============================
 def login():
-    st.title("🔐 Login")
+    st.title("🏋️ GymManager Pro")
 
-    email = st.text_input("Email")
-    senha = st.text_input("Senha", type="password")
+    tab1, tab2 = st.tabs(["Login", "Cadastro"])
 
-    if st.button("Entrar"):
-        conn = get_connection()
-        df = pd.read_sql(
-            "SELECT * FROM usuarios WHERE email=? AND senha=?",
-            conn,
-            params=(email, senha)
-        )
-        conn.close()
+    with tab1:
+        email = st.text_input("Email")
+        senha = st.text_input("Senha", type="password")
+        if st.button("Entrar"):
+            df = pd.read_sql(
+                "SELECT * FROM usuarios WHERE email=? AND senha=?",
+                conn(), params=(email, senha)
+            )
+            if df.empty:
+                st.error("Credenciais inválidas")
+            else:
+                st.session_state.usuario_id = df.iloc[0]["id"]
+                st.session_state.nome = df.iloc[0]["nome"]
+                st.rerun()
 
-        if df.empty:
-            st.error("Login inválido")
-        else:
-            user = df.iloc[0]
-            st.session_state.usuario_id = user["id"]
-            st.session_state.nome = user["nome"]
-            st.session_state.perfil = user["perfil"]
-            st.rerun()
+    with tab2:
+        nome = st.text_input("Nome")
+        email = st.text_input("Email", key="cad_email")
+        senha = st.text_input("Senha", type="password", key="cad_senha")
+        if st.button("Criar Conta"):
+            try:
+                conn().execute(
+                    "INSERT INTO usuarios (nome,email,senha) VALUES (?,?,?)",
+                    (nome,email,senha)
+                )
+                conn().commit()
+                st.success("Conta criada! Faça login.")
+            except:
+                st.error("Email já cadastrado")
 
 # =============================
 # PDF
 # =============================
-def gerar_pdf(aluno, objetivo, treinos):
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=A4)
+def gerar_pdf(nome, treinos):
+    buf = BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
     y = A4[1] - 50
 
     pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(50, y, "Ficha de Treino")
-    y -= 30
+    pdf.drawString(50, y, f"Treino - {nome}")
+    y -= 40
 
-    pdf.setFont("Helvetica", 12)
-    pdf.drawString(50, y, f"Aluno: {aluno}")
-    y -= 20
-    pdf.drawString(50, y, f"Objetivo: {objetivo}")
-    y -= 30
-
-    for treino, exercicios in treinos.items():
+    for tipo, exs in treinos.items():
         pdf.setFont("Helvetica-Bold", 12)
-        pdf.drawString(50, y, treino)
+        pdf.drawString(50, y, tipo)
         y -= 20
         pdf.setFont("Helvetica", 10)
 
-        for ex in exercicios:
-            linha = f"{ex['exercicio']} | {ex['series']}x {ex['repeticoes']} | {ex['carga']}kg"
-            pdf.drawString(60, y, linha)
+        for ex in exs:
+            pdf.drawString(
+                60, y,
+                f"{ex['exercicio']} | {ex['series']}x{ex['repeticoes']} | {ex['carga']}kg"
+            )
             y -= 15
 
             if y < 80:
                 pdf.showPage()
                 y = A4[1] - 50
 
+        y -= 10
+
     pdf.save()
-    buffer.seek(0)
-    return buffer
+    buf.seek(0)
+    return buf
 
 # =============================
-# TELAS PERSONAL
+# APP
 # =============================
-def cadastrar_aluno():
-    st.header("➕ Cadastrar Aluno")
+def app():
+    st.sidebar.write(f"👤 {st.session_state.nome}")
 
-    with st.form("cad_aluno"):
-        nome = st.text_input("Nome")
-        email = st.text_input("Email")
-        senha = st.text_input("Senha")
-        objetivo = st.selectbox("Objetivo", ["Hipertrofia", "Emagrecimento", "Condicionamento"])
-        submit = st.form_submit_button("Cadastrar")
+    st.header("🏋️ Meu Treino")
 
-        if submit:
-            conn = get_connection()
-            c = conn.cursor()
-            try:
-                c.execute(
-                    "INSERT INTO usuarios (nome,email,senha,perfil) VALUES (?,?,?,?)",
-                    (nome,email,senha,"aluno")
-                )
-                usuario_id = c.lastrowid
+    tipos = pd.read_sql("SELECT nome FROM tipos_treino ORDER BY nome", conn())["nome"].tolist()
 
-                c.execute(
-                    "INSERT INTO alunos (usuario_id, objetivo) VALUES (?,?)",
-                    (usuario_id, objetivo)
-                )
-                conn.commit()
-                st.success("Aluno cadastrado com login!")
-            except:
-                st.error("Erro ao cadastrar.")
-            conn.close()
+    tipo = st.selectbox("Tipo de treino", tipos)
+    novo_tipo = st.text_input("Ou criar novo tipo de treino")
 
-def cadastrar_tipo_treino():
-    st.header("🏷️ Tipos de Treino")
-    nome = st.text_input("Nome")
-    if st.button("Salvar"):
-        conn = get_connection()
+    if novo_tipo:
         try:
-            conn.execute("INSERT INTO tipos_treino (nome) VALUES (?)", (nome,))
-            conn.commit()
-            st.success("Cadastrado!")
+            conn().execute("INSERT INTO tipos_treino (nome) VALUES (?)", (novo_tipo,))
+            conn().commit()
+            tipo = novo_tipo
+            st.success("Tipo criado!")
         except:
-            st.error("Já existe.")
-        conn.close()
-
-def montar_treino():
-    st.header("🏋️ Montar Treino")
-
-    conn = get_connection()
-    alunos = pd.read_sql("""
-        SELECT alunos.id, usuarios.nome 
-        FROM alunos 
-        JOIN usuarios ON usuarios.id = alunos.usuario_id
-    """, conn)
-
-    tipos = pd.read_sql("SELECT nome FROM tipos_treino", conn)
-    conn.close()
-
-    aluno_nome = st.selectbox("Aluno", alunos["nome"])
-    aluno_id = alunos[alunos["nome"] == aluno_nome]["id"].values[0]
-    tipo = st.selectbox("Tipo de treino", tipos["nome"])
+            st.warning("Tipo já existe")
 
     with st.form("treino"):
         ex = st.text_input("Exercício")
         s = st.number_input("Séries", 1)
         r = st.text_input("Repetições")
-        c = st.number_input("Carga", 0.0)
-        submit = st.form_submit_button("Adicionar")
-
-        if submit:
-            conn = get_connection()
-            conn.execute(
+        c = st.number_input("Carga (kg)", 0.0)
+        if st.form_submit_button("Adicionar"):
+            conn().execute(
                 "INSERT INTO treinos VALUES (NULL,?,?,?,?,?,?)",
-                (aluno_id, tipo, ex, s, r, c)
+                (st.session_state.usuario_id, tipo, ex, s, r, c)
             )
-            conn.commit()
-            conn.close()
+            conn().commit()
             st.success("Exercício adicionado")
 
-# =============================
-# TELA ALUNO
-# =============================
-def meu_treino():
-    st.header("📋 Meu Treino")
-
-    conn = get_connection()
-    aluno = pd.read_sql(
-        "SELECT * FROM alunos WHERE usuario_id=?",
-        conn,
-        params=(st.session_state.usuario_id,)
-    ).iloc[0]
-
     df = pd.read_sql(
-        "SELECT tipo_treino, exercicio, series, repeticoes, carga FROM treinos WHERE aluno_id=?",
-        conn,
-        params=(aluno["id"],)
+        "SELECT tipo_treino, exercicio, series, repeticoes, carga FROM treinos WHERE usuario_id=?",
+        conn(), params=(st.session_state.usuario_id,)
     )
-    conn.close()
 
-    if df.empty:
-        st.info("Nenhum treino cadastrado.")
-        return
+    if not df.empty:
+        st.dataframe(df, use_container_width=True)
 
-    st.dataframe(df)
-
-    treinos = df.groupby("tipo_treino").apply(lambda x: x.to_dict("records")).to_dict()
-    pdf = gerar_pdf(st.session_state.nome, aluno["objetivo"], treinos)
-
-    st.download_button("📄 Baixar PDF", pdf, "meu_treino.pdf")
+        treinos = df.groupby("tipo_treino").apply(lambda x: x.to_dict("records")).to_dict()
+        pdf = gerar_pdf(st.session_state.nome, treinos)
+        st.download_button("📄 Baixar PDF", pdf, "meu_treino.pdf")
 
 # =============================
 # MAIN
@@ -244,14 +189,4 @@ def meu_treino():
 if "usuario_id" not in st.session_state:
     login()
 else:
-    st.sidebar.write(f"👤 {st.session_state.nome}")
-    if st.session_state.perfil == "personal":
-        menu = st.sidebar.radio("Menu", ["Cadastrar Aluno", "Tipos de Treino", "Montar Treino"])
-        if menu == "Cadastrar Aluno":
-            cadastrar_aluno()
-        elif menu == "Tipos de Treino":
-            cadastrar_tipo_treino()
-        else:
-            montar_treino()
-    else:
-        meu_treino()
+    app()
