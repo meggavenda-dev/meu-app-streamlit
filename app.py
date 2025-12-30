@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import plotly.express as px
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from io import BytesIO
+from datetime import datetime
 
 # Configuração da página
 st.set_page_config(page_title="GymManager Pro", layout="wide", page_icon="🏋️")
@@ -17,26 +19,18 @@ def get_connection():
 def init_db():
     conn = get_connection()
     c = conn.cursor()
-    # Tabela de Usuários
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS usuarios (
+    c.execute("""CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT NOT NULL,
         login TEXT UNIQUE NOT NULL,
         senha TEXT NOT NULL,
-        role TEXT NOT NULL
-    )
-    """)
-    # Tabela de Tipos de Treino
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS tipos_treino (
+        role TEXT NOT NULL)""")
+    
+    c.execute("""CREATE TABLE IF NOT EXISTS tipos_treino (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT UNIQUE NOT NULL
-    )
-    """)
-    # Tabela de Treinos
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS treinos (
+        nome TEXT UNIQUE NOT NULL)""")
+    
+    c.execute("""CREATE TABLE IF NOT EXISTS treinos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usuario_id INTEGER,
         tipo_treino TEXT,
@@ -44,212 +38,187 @@ def init_db():
         series INTEGER,
         repeticoes TEXT,
         carga REAL,
-        FOREIGN KEY(usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
-    )
-    """)
-    # Admin padrão
-    c.execute("INSERT OR IGNORE INTO usuarios (nome, login, senha, role) VALUES ('Administrador', 'admin', 'admin', 'admin')")
+        FOREIGN KEY(usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE)""")
     
-    # Tipos de treino padrão
-    tipos = ["Costas", "Peito", "Pernas", "Ombro", "Braços", "Abdômen", "Full Body"]
+    c.execute("""CREATE TABLE IF NOT EXISTS medidas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER,
+        peso REAL,
+        cintura REAL,
+        braço REAL,
+        data TEXT,
+        FOREIGN KEY(usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE)""")
+    
+    c.execute("INSERT OR IGNORE INTO usuarios (nome, login, senha, role) VALUES ('Administrador', 'admin', 'admin', 'admin')")
+    tipos = ["Costas", "Peito", "Pernas", "Ombro", "Braços", "Abdômen", "Cardio"]
     for t in tipos:
         c.execute("INSERT OR IGNORE INTO tipos_treino (nome) VALUES (?)", (t,))
-    
     conn.commit()
     conn.close()
 
 init_db()
 
 # =============================
-# LÓGICA DE LOGIN
-# =============================
-def login():
-    st.title("🏋️ GymManager Pro")
-    st.subheader("Acesse sua conta")
-    
-    with st.form("login_form"):
-        login_user = st.text_input("Login")
-        senha = st.text_input("Senha", type="password")
-        submit = st.form_submit_button("Entrar")
-
-        if submit:
-            conn = get_connection()
-            query = "SELECT * FROM usuarios WHERE login=? AND senha=?"
-            df = pd.read_sql(query, conn, params=(login_user, senha))
-            conn.close()
-
-            if not df.empty:
-                st.session_state.user = df.iloc[0].to_dict()
-                st.rerun()
-            else:
-                st.error("Usuário ou senha incorretos.")
-
-# =============================
-# EXPORTAÇÃO PDF
+# UTILITÁRIOS (PDF E LOGIN)
 # =============================
 def gerar_pdf(nome, treinos_dict):
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-    y = height - 50
-
+    y = 800
     p.setFont("Helvetica-Bold", 18)
     p.drawString(50, y, f"Ficha de Treino: {nome}")
-    y -= 40
-
+    y -= 50
     for tipo, exercicios in treinos_dict.items():
-        if y < 100: p.showPage(); y = height - 50
+        if y < 100: p.showPage(); y = 800
         p.setFont("Helvetica-Bold", 14)
-        p.setFillColorRGB(0.1, 0.3, 0.6)
         p.drawString(50, y, f"--- {tipo} ---")
         y -= 25
-        p.setFillColorRGB(0, 0, 0)
         p.setFont("Helvetica", 11)
-
         for ex in exercicios:
-            texto = f"• {ex['exercicio']}: {ex['series']}x{ex['repeticoes']} - Carga: {ex['carga']}kg"
-            p.drawString(60, y, texto)
+            p.drawString(60, y, f"• {ex['exercicio']}: {ex['series']}x{ex['repeticoes']} - {ex['carga']}kg")
             y -= 20
-            if y < 50: p.showPage(); y = height - 50
         y -= 10
-
     p.save()
     buffer.seek(0)
     return buffer
+
+def login():
+    st.title("🏋️ GymManager Pro")
+    with st.form("login_form"):
+        u, s = st.text_input("Login"), st.text_input("Senha", type="password")
+        if st.form_submit_button("Entrar"):
+            conn = get_connection()
+            df = pd.read_sql("SELECT * FROM usuarios WHERE login=? AND senha=?", conn, params=(u, s))
+            conn.close()
+            if not df.empty:
+                st.session_state.user = df.iloc[0].to_dict()
+                st.rerun()
+            else: st.error("Acesso negado.")
 
 # =============================
 # PAINEL ADMINISTRATIVO
 # =============================
 def painel_admin():
     st.sidebar.title("🔐 Administração")
-    menu = st.sidebar.radio("Navegação", ["Gerenciar Alunos", "Configurar Treinos", "Tipos de Treino"])
-
+    menu = st.sidebar.radio("Navegação", ["Alunos", "Treinos", "Configurações"])
     conn = get_connection()
 
-    if menu == "Gerenciar Alunos":
-        st.header("👥 Cadastro e Gestão de Alunos")
-        
-        # Cadastro
-        with st.expander("Cadastrar Novo Aluno"):
-            nome = st.text_input("Nome Completo")
-            log = st.text_input("Login de Acesso")
-            pwd = st.text_input("Senha Provisória", type="password")
-            if st.button("Salvar Cadastro"):
-                if nome and log and pwd:
-                    try:
-                        cursor = conn.cursor()
-                        cursor.execute("INSERT INTO usuarios (nome, login, senha, role) VALUES (?, ?, ?, 'aluno')", (nome, log, pwd))
-                        conn.commit()
-                        st.success("Aluno cadastrado!")
-                        st.rerun()
-                    except: st.error("Este login já está em uso.")
-                else: st.warning("Preencha todos os campos.")
-
-        # Listagem e Exclusão
-        st.subheader("Lista de Alunos")
-        alunos_df = pd.read_sql("SELECT id, nome, login FROM usuarios WHERE role='aluno'", conn)
-        if not alunos_df.empty:
-            for _, row in alunos_df.iterrows():
-                col1, col2 = st.columns([4, 1])
-                col1.write(f"**{row['nome']}** (Login: {row['login']})")
-                if col2.button("❌", key=f"del_{row['id']}"):
-                    cursor = conn.cursor()
-                    cursor.execute("DELETE FROM usuarios WHERE id=?", (row['id'],))
+    if menu == "Alunos":
+        st.header("👥 Gestão de Alunos")
+        with st.expander("➕ Cadastrar Novo Aluno"):
+            n, l, p = st.text_input("Nome"), st.text_input("Login"), st.text_input("Senha", type="password")
+            if st.button("Salvar"):
+                try:
+                    c = conn.cursor()
+                    c.execute("INSERT INTO usuarios (nome,login,senha,role) VALUES (?,?,?,'aluno')", (n,l,p))
                     conn.commit()
-                    st.rerun()
-        else: st.info("Nenhum aluno cadastrado.")
+                    st.success("Cadastrado!"); st.rerun()
+                except: st.error("Login duplicado.")
 
-    elif menu == "Configurar Treinos":
-        st.header("🏋️ Montar Ficha de Treino")
+        alunos_df = pd.read_sql("SELECT id, nome, login FROM usuarios WHERE role='aluno'", conn)
+        for _, row in alunos_df.iterrows():
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([3, 1, 1])
+                col1.write(f"**{row['nome']}**")
+                if col2.button("🔑 Senha", key=f"pw_{row['id']}"): st.session_state[f"edit_{row['id']}"] = True
+                if col3.button("❌", key=f"del_{row['id']}"):
+                    conn.execute("DELETE FROM usuarios WHERE id=?", (row['id'],)); conn.commit(); st.rerun()
+                
+                if st.session_state.get(f"edit_{row['id']}", False):
+                    nova = st.text_input("Nova Senha", type="password", key=f"in_{row['id']}")
+                    if st.button("Confirmar", key=f"btn_{row['id']}"):
+                        conn.execute("UPDATE usuarios SET senha=? WHERE id=?", (nova, row['id'])); conn.commit()
+                        st.session_state[f"edit_{row['id']}"] = False; st.success("Alterada!"); st.rerun()
+
+    elif menu == "Treinos":
+        st.header("🏋️ Montar Ficha")
         alunos = pd.read_sql("SELECT id, nome FROM usuarios WHERE role='aluno'", conn)
         tipos = pd.read_sql("SELECT nome FROM tipos_treino", conn)
-
-        if alunos.empty:
-            st.warning("Cadastre um aluno primeiro.")
-        else:
-            aluno_sel = st.selectbox("Selecione o Aluno", alunos["nome"])
-            aluno_id = int(alunos[alunos["nome"] == aluno_sel]["id"].values[0])
-            
-            with st.container(border=True):
-                c1, c2 = st.columns(2)
-                tipo = c1.selectbox("Tipo de Treino", tipos["nome"])
-                ex = c2.text_input("Nome do Exercício")
-                
-                c3, c4, c5 = st.columns(3)
-                ser = c3.number_input("Séries", 1, 10, 3)
-                rep = c4.text_input("Repetições", "12")
-                car = c5.number_input("Carga (kg)", 0.0, 500.0, 10.0)
-                
-                if st.button("Adicionar Exercício"):
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO treinos (usuario_id, tipo_treino, exercicio, series, repeticoes, carga) VALUES (?,?,?,?,?,?)",
-                                 (aluno_id, tipo, ex, ser, rep, car))
-                    conn.commit()
-                    st.toast("Adicionado!")
-
-            # Visualizar e limpar treino atual
-            st.subheader(f"Treino Atual de {aluno_sel}")
-            treino_df = pd.read_sql("SELECT id, tipo_treino, exercicio, series, repeticoes, carga FROM treinos WHERE usuario_id=?", conn, params=(aluno_id,))
-            if not treino_df.empty:
-                st.table(treino_df.drop(columns=["id"]))
-                if st.button("Limpar Toda a Ficha"):
-                    cursor = conn.cursor()
-                    cursor.execute("DELETE FROM treinos WHERE usuario_id=?", (aluno_id,))
-                    conn.commit()
-                    st.rerun()
-            else: st.info("Ficha vazia.")
-
-    elif menu == "Tipos de Treino":
-        st.header("🏷️ Categorias de Treino")
-        novo_tipo = st.text_input("Novo Tipo (Ex: Crossfit)")
-        if st.button("Adicionar"):
-            try:
-                cursor = conn.cursor()
-                cursor.execute("INSERT INTO tipos_treino (nome) VALUES (?)", (novo_tipo,))
-                conn.commit()
-                st.rerun()
-            except: st.error("Já existe.")
         
-        tipos_df = pd.read_sql("SELECT nome FROM tipos_treino", conn)
-        st.dataframe(tipos_df, use_container_width=True)
+        if not alunos.empty:
+            sel_aluno = st.selectbox("Aluno", alunos["nome"])
+            a_id = int(alunos[alunos["nome"] == sel_aluno]["id"].values[0])
+            
+            with st.form("add_ex"):
+                c1, c2, c3, c4 = st.columns(4)
+                t = c1.selectbox("Tipo", tipos["nome"])
+                ex = c2.text_input("Exercício")
+                ser = c3.number_input("Séries", 1, 10)
+                rep = c4.text_input("Reps", "12")
+                car = st.number_input("Carga (kg)", 0.0)
+                if st.form_submit_button("Adicionar"):
+                    conn.execute("INSERT INTO treinos (usuario_id, tipo_treino, exercicio, series, repeticoes, carga) VALUES (?,?,?,?,?,?)",
+                                 (a_id, t, ex, ser, rep, car)); conn.commit(); st.toast("Adicionado!")
+            
+            df_t = pd.read_sql("SELECT id, tipo_treino, exercicio, carga FROM treinos WHERE usuario_id=?", conn, params=(a_id,))
+            st.dataframe(df_t, use_container_width=True)
+            if st.button("Limpar Ficha"):
+                conn.execute("DELETE FROM treinos WHERE usuario_id=?", (a_id,)); conn.commit(); st.rerun()
 
+    elif menu == "Configurações":
+        st.header("⚙️ Tipos de Treino")
+        novo = st.text_input("Novo Tipo")
+        if st.button("Adicionar"):
+            try: conn.execute("INSERT INTO tipos_treino (nome) VALUES (?)", (novo,)); conn.commit(); st.rerun()
+            except: st.error("Existe.")
     conn.close()
 
 # =============================
 # PAINEL DO ALUNO
 # =============================
 def painel_aluno():
-    st.header(f"💪 Olá, {st.session_state.user['nome']}!")
+    st.header(f"👋 Bem-vindo, {st.session_state.user['nome']}!")
+    tab1, tab2, tab3 = st.tabs(["🏋️ Meu Treino", "📈 Evolução", "⚙️ Perfil"])
     conn = get_connection()
-    df = pd.read_sql("SELECT tipo_treino, exercicio, series, repeticoes, carga FROM treinos WHERE usuario_id=?", 
-                     conn, params=(st.session_state.user["id"],))
+    u_id = st.session_state.user["id"]
+
+    with tab1:
+        df = pd.read_sql("SELECT * FROM treinos WHERE usuario_id=?", conn, params=(u_id,))
+        if df.empty: st.info("Sem treino cadastrado.")
+        else:
+            for t in df["tipo_treino"].unique():
+                with st.expander(f"TREINO {t.upper()}"):
+                    st.table(df[df["tipo_treino"] == t][["exercicio", "series", "repeticoes", "carga"]])
+            pdf = gerar_pdf(st.session_state.user["nome"], df.groupby("tipo_treino").apply(lambda x: x.to_dict("records")).to_dict())
+            st.download_button("📥 PDF da Ficha", pdf, "treino.pdf")
+
+    with tab2:
+        st.subheader("Registrar Medidas")
+        with st.form("medidas"):
+            c1, c2, c3 = st.columns(3)
+            p = c1.number_input("Peso (kg)", 0.0)
+            cin = c2.number_input("Cintura (cm)", 0.0)
+            br = c3.number_input("Braço (cm)", 0.0)
+            if st.form_submit_button("Salvar Medida"):
+                conn.execute("INSERT INTO medidas (usuario_id, peso, cintura, braço, data) VALUES (?,?,?,?,?)",
+                             (u_id, p, cin, br, datetime.now().strftime("%d/%m/%Y")))
+                conn.commit(); st.success("Registrado!")
+        
+        df_m = pd.read_sql("SELECT peso, cintura, braço, data FROM medidas WHERE usuario_id=? ORDER BY id DESC", conn, params=(u_id,))
+        if not df_m.empty:
+            fig = px.line(df_m, x="data", y="peso", title="Evolução do Peso")
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(df_m, use_container_width=True)
+
+    with tab3:
+        st.subheader("Alterar Senha")
+        with st.form("perfil"):
+            n1 = st.text_input("Nova Senha", type="password")
+            n2 = st.text_input("Confirme", type="password")
+            if st.form_submit_button("Atualizar"):
+                if n1 == n2 and n1 != "":
+                    conn.execute("UPDATE usuarios SET senha=? WHERE id=?", (n1, u_id)); conn.commit()
+                    st.success("Senha alterada!")
+                else: st.error("Senhas não conferem.")
     conn.close()
 
-    if df.empty:
-        st.info("Sua ficha ainda não foi montada pelos instrutores.")
-    else:
-        for tipo in df["tipo_treino"].unique():
-            with st.expander(f"TREINO: {tipo.upper()}", expanded=True):
-                sub_df = df[df["tipo_treino"] == tipo]
-                st.table(sub_df[["exercicio", "series", "repeticoes", "carga"]])
-        
-        # Preparar dados para PDF
-        treinos_pdf = df.groupby("tipo_treino").apply(lambda x: x.to_dict("records")).to_dict()
-        pdf_file = gerar_pdf(st.session_state.user["nome"], treinos_pdf)
-        st.download_button("📥 Baixar Minha Ficha (PDF)", pdf_file, file_name="meu_treino.pdf")
-
 # =============================
-# FLUXO PRINCIPAL
+# MAIN
 # =============================
 if "user" not in st.session_state:
     login()
 else:
-    st.sidebar.markdown(f"### Bem-vindo, \n**{st.session_state.user['nome']}**")
-    if st.sidebar.button("Sair"):
-        st.session_state.clear()
-        st.rerun()
-
-    if st.session_state.user["role"] == "admin":
-        painel_admin()
-    else:
-        painel_aluno()
+    if st.sidebar.button("🚪 Sair"):
+        st.session_state.clear(); st.rerun()
+    if st.session_state.user["role"] == "admin": painel_admin()
+    else: painel_aluno()
