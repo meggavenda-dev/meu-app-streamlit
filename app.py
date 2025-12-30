@@ -152,3 +152,48 @@ def main():
 # =============================
 if __name__ == "__main__":
     main()
+
+def gerar_pdf(aluno, objetivo, treinos):
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    largura, altura = A4
+
+    y = altura - 50
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(50, y, "Ficha de Treino")
+    y -= 30
+
+    pdf.setFont("Helvetica", 12)
+    pdf.drawString(50, y, f"Aluno: {aluno}")
+    y -= 20
+    pdf.drawString(50, y, f"Objetivo: {objetivo}")
+    y -= 30
+
+    for treino, exercicios in treinos.items():
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawString(50, y, treino)
+        y -= 20
+
+        pdf.setFont("Helvetica", 10)
+
+        for ex in exercicios:
+            linha = (
+                f"{ex['exercicio']} | "
+                f"Séries: {ex['series']} | "
+                f"Reps: {ex['repeticoes']} | "
+                f"Carga: {ex['carga_kg']}kg"
+            )
+            pdf.drawString(60, y, linha)
+            y -= 15
+
+            if y < 80:
+                pdf.showPage()
+                y = altura - 50
+                pdf.setFont("Helvetica", 10)
+
+        y -= 10
+
+    pdf.save()
+    buffer.seek(0)
+    return buffer
