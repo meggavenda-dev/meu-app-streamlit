@@ -4,3 +4,4 @@ plotly
 reportlab
 fpdf
 qrcode
+pillow
