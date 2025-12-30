@@ -24,7 +24,7 @@ def criar_tabelas():
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT,
-        email TEXT UNIQUE,
+        login TEXT UNIQUE,
         senha TEXT,
         role TEXT
     )
@@ -51,8 +51,8 @@ def criar_tabelas():
 
     # usuário master
     c.execute("""
-    INSERT OR IGNORE INTO usuarios (nome,email,senha,role)
-    VALUES ('Administrador','admin','admin','master')
+    INSERT OR IGNORE INTO usuarios (nome, login, senha, role)
+    VALUES ('Administrador', 'admin', 'admin', 'master')
     """)
 
     con.commit()
@@ -75,18 +75,19 @@ seed_tipos()
 # =============================
 # LOGIN
 # =============================
-def login():
+def tela_login():
     st.title("🏋️ GymManager Pro")
 
     tab1, tab2 = st.tabs(["Login", "Cadastro"])
 
     with tab1:
-        email = st.text_input("Login / Email")
-        senha = st.text_input("Senha", type="password")
-        if st.button("Entrar"):
+        login = st.text_input("Login", key="login_user")
+        senha = st.text_input("Senha", type="password", key="login_pass")
+
+        if st.button("Entrar", key="btn_login"):
             df = pd.read_sql(
-                "SELECT * FROM usuarios WHERE email=? AND senha=?",
-                conn(), params=(email, senha)
+                "SELECT * FROM usuarios WHERE login=? AND senha=?",
+                conn(), params=(login, senha)
             )
             if df.empty:
                 st.error("Credenciais inválidas")
@@ -95,19 +96,20 @@ def login():
                 st.rerun()
 
     with tab2:
-        nome = st.text_input("Nome")
-        email = st.text_input("Email")
-        senha = st.text_input("Senha", type="password")
-        if st.button("Criar Conta"):
+        nome = st.text_input("Nome", key="cad_nome")
+        login = st.text_input("Login", key="cad_login")
+        senha = st.text_input("Senha", type="password", key="cad_senha")
+
+        if st.button("Criar Conta", key="btn_cadastro"):
             try:
                 conn().execute(
-                    "INSERT INTO usuarios (nome,email,senha,role) VALUES (?,?,?,'aluno')",
-                    (nome,email,senha)
+                    "INSERT INTO usuarios (nome, login, senha, role) VALUES (?,?,?,'aluno')",
+                    (nome, login, senha)
                 )
                 conn().commit()
                 st.success("Conta criada! Faça login.")
             except:
-                st.error("Email já cadastrado")
+                st.error("Login já existe")
 
 # =============================
 # PDF
@@ -118,7 +120,7 @@ def gerar_pdf(nome, treinos):
     y = A4[1] - 50
 
     pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(50, y, f"Treino - {nome}")
+    pdf.drawString(50, y, f"Ficha de Treino - {nome}")
     y -= 40
 
     for tipo, exs in treinos.items():
@@ -144,30 +146,42 @@ def gerar_pdf(nome, treinos):
     return buf
 
 # =============================
-# TELAS
+# MASTER
 # =============================
-def tela_aluno():
-    st.header("🏋️ Meu Treino")
+def painel_master():
+    st.header("🔐 Painel Master")
 
-    tipos = pd.read_sql("SELECT nome FROM tipos_treino ORDER BY nome", conn())["nome"].tolist()
-
-    tipo = st.selectbox("Tipo de treino", tipos)
-    novo_tipo = st.text_input("Criar novo tipo (opcional)")
-
-    if novo_tipo:
+    st.subheader("Tipos de Treino")
+    novo = st.text_input("Novo tipo", key="novo_tipo")
+    if st.button("Adicionar", key="btn_tipo"):
         try:
-            conn().execute("INSERT INTO tipos_treino (nome) VALUES (?)", (novo_tipo,))
+            conn().execute("INSERT INTO tipos_treino (nome) VALUES (?)", (novo,))
             conn().commit()
-            tipo = novo_tipo
-            st.success("Tipo criado!")
+            st.success("Tipo adicionado")
         except:
             st.warning("Tipo já existe")
 
-    with st.form("treino"):
+    tipos = pd.read_sql("SELECT nome FROM tipos_treino ORDER BY nome", conn())
+    st.dataframe(tipos, use_container_width=True)
+
+    st.subheader("Usuários")
+    usuarios = pd.read_sql("SELECT nome, login, role FROM usuarios", conn())
+    st.dataframe(usuarios, use_container_width=True)
+
+# =============================
+# ALUNO
+# =============================
+def painel_aluno():
+    st.header("🏋️ Meu Treino")
+
+    tipos = pd.read_sql("SELECT nome FROM tipos_treino", conn())["nome"].tolist()
+    tipo = st.selectbox("Tipo de treino", tipos, key="tipo_treino")
+
+    with st.form("form_treino"):
         ex = st.text_input("Exercício")
         s = st.number_input("Séries", 1)
         r = st.text_input("Repetições")
-        c = st.number_input("Carga (kg)", 0.0)
+        c = st.number_input("Carga", 0.0)
         if st.form_submit_button("Adicionar"):
             conn().execute(
                 "INSERT INTO treinos VALUES (NULL,?,?,?,?,?,?)",
@@ -184,29 +198,14 @@ def tela_aluno():
     if not df.empty:
         st.dataframe(df, use_container_width=True)
         treinos = df.groupby("tipo_treino").apply(lambda x: x.to_dict("records")).to_dict()
-        st.download_button("📄 Baixar PDF", gerar_pdf(st.session_state.usuario["nome"], treinos), "meu_treino.pdf")
-
-def tela_master():
-    st.header("🛠️ Painel do Administrador")
-
-    usuarios = pd.read_sql("SELECT id,nome,email,role FROM usuarios", conn())
-    st.subheader("Usuários")
-    st.dataframe(usuarios, use_container_width=True)
-
-    treinos = pd.read_sql("""
-        SELECT u.nome, t.tipo_treino, t.exercicio, t.series, t.repeticoes, t.carga
-        FROM treinos t
-        JOIN usuarios u ON u.id = t.usuario_id
-    """, conn())
-
-    st.subheader("Treinos cadastrados")
-    st.dataframe(treinos, use_container_width=True)
+        pdf = gerar_pdf(st.session_state.usuario["nome"], treinos)
+        st.download_button("📄 Baixar PDF", pdf, "meu_treino.pdf")
 
 # =============================
 # MAIN
 # =============================
 if "usuario" not in st.session_state:
-    login()
+    tela_login()
 else:
     st.sidebar.write(f"👤 {st.session_state.usuario['nome']}")
     if st.sidebar.button("Sair"):
@@ -214,6 +213,6 @@ else:
         st.rerun()
 
     if st.session_state.usuario["role"] == "master":
-        tela_master()
+        painel_master()
     else:
-        tela_aluno()
+        painel_aluno()
