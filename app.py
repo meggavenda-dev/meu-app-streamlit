@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from io import BytesIO
-import sqlite3
 
 # =============================
 # CONFIGURAÇÃO DA PÁGINA
@@ -14,9 +14,8 @@ st.set_page_config(
 )
 
 # =============================
-# FUNÇÃO PDF
+# BANCO DE DADOS
 # =============================
-
 def get_connection():
     return sqlite3.connect("gym.db", check_same_thread=False)
 
@@ -40,7 +39,8 @@ def criar_tabelas():
             exercicio TEXT,
             series INTEGER,
             repeticoes TEXT,
-            carga REAL
+            carga REAL,
+            FOREIGN KEY(aluno_id) REFERENCES alunos(id)
         )
     """)
 
@@ -49,6 +49,9 @@ def criar_tabelas():
 
 criar_tabelas()
 
+# =============================
+# PDF
+# =============================
 def gerar_pdf(aluno, objetivo, treinos):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
@@ -70,19 +73,14 @@ def gerar_pdf(aluno, objetivo, treinos):
         pdf.setFont("Helvetica-Bold", 12)
         pdf.drawString(50, y, treino)
         y -= 20
-
         pdf.setFont("Helvetica", 10)
-
-        if not exercicios:
-            pdf.drawString(60, y, "Nenhum exercício cadastrado.")
-            y -= 15
 
         for ex in exercicios:
             linha = (
                 f"{ex['exercicio']} | "
                 f"Séries: {ex['series']} | "
                 f"Reps: {ex['repeticoes']} | "
-                f"Carga: {ex['carga_kg']}kg"
+                f"Carga: {ex['carga']}kg"
             )
             pdf.drawString(60, y, linha)
             y -= 15
@@ -99,10 +97,9 @@ def gerar_pdf(aluno, objetivo, treinos):
     return buffer
 
 # =============================
-# FUNÇÕES APP
+# TELAS
 # =============================
 def cadastrar_aluno():
-    
     st.header("➕ Cadastrar Aluno")
 
     with st.form("form_cadastro"):
@@ -119,129 +116,123 @@ def cadastrar_aluno():
                 st.error("Informe o nome do aluno.")
                 return
 
-            if nome in st.session_state.alunos:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            try:
+                cursor.execute(
+                    "INSERT INTO alunos (nome, objetivo) VALUES (?, ?)",
+                    (nome, objetivo)
+                )
+                conn.commit()
+                st.success("Aluno cadastrado com sucesso!")
+            except sqlite3.IntegrityError:
                 st.error("Aluno já cadastrado.")
-                return
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "INSERT INTO alunos (nome, objetivo) VALUES (?, ?)",
-            (nome, objetivo)
-            )
-
-        conn.commit()
-        conn.close()
-
-
-            st.success(f"Aluno {nome} cadastrado com sucesso!")
+            finally:
+                conn.close()
 
 # -------------------------------------------------
 
 def montar_treino():
     st.header("🏋️ Montar Treino")
 
-    if not st.session_state.alunos:
+    conn = get_connection()
+    alunos = pd.read_sql("SELECT id, nome FROM alunos", conn)
+    conn.close()
+
+    if alunos.empty:
         st.warning("Nenhum aluno cadastrado.")
         return
 
-    aluno = st.selectbox(
-        "Selecione o Aluno",
-        list(st.session_state.alunos.keys())
-    )
+    aluno_nome = st.selectbox("Aluno", alunos["nome"])
+    aluno_id = alunos[alunos["nome"] == aluno_nome]["id"].values[0]
 
-    treino_tipo = st.selectbox(
-        "Selecione o Treino",
-        ["Treino A", "Treino B", "Treino C"]
-    )
+    treino_tipo = st.selectbox("Treino", ["Treino A", "Treino B", "Treino C"])
 
     with st.form("form_treino"):
         col1, col2, col3, col4 = st.columns(4)
 
         exercicio = col1.text_input("Exercício")
-        series = col2.number_input("Séries", min_value=1, step=1)
-        repeticoes = col3.text_input("Repetições (ex: 8-12)")
-        carga = col4.number_input("Carga (kg)", min_value=0)
+        series = col2.number_input("Séries", min_value=1)
+        repeticoes = col3.text_input("Repetições")
+        carga = col4.number_input("Carga (kg)", min_value=0.0)
 
         submitted = st.form_submit_button("Adicionar Exercício")
 
         if submitted:
             if not exercicio or not repeticoes:
-                st.error("Preencha exercício e repetições.")
+                st.error("Preencha todos os campos.")
                 return
 
-            item = {
-                "exercicio": exercicio,
-                "series": series,
-                "repeticoes": repeticoes,
-                "carga_kg": carga
-            }
+            conn = get_connection()
+            cursor = conn.cursor()
 
-            st.session_state.alunos[aluno]["treinos"][treino_tipo].append(item)
-            st.success("Exercício adicionado ao treino.")
+            cursor.execute("""
+                INSERT INTO treinos
+                (aluno_id, treino, exercicio, series, repeticoes, carga)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                aluno_id, treino_tipo, exercicio, series, repeticoes, carga
+            ))
+
+            conn.commit()
+            conn.close()
+
+            st.success("Exercício adicionado com sucesso!")
 
 # -------------------------------------------------
 
 def visualizar_ficha():
     st.header("📋 Ficha de Treino")
 
-    if not st.session_state.alunos:
+    conn = get_connection()
+    alunos = pd.read_sql("SELECT id, nome, objetivo FROM alunos", conn)
+    conn.close()
+
+    if alunos.empty:
         st.warning("Nenhum aluno cadastrado.")
         return
 
-    aluno = st.selectbox(
-        "Selecione o Aluno",
-        list(st.session_state.alunos.keys())
-    )
+    aluno_nome = st.selectbox("Aluno", alunos["nome"])
+    aluno = alunos[alunos["nome"] == aluno_nome].iloc[0]
 
-    dados = st.session_state.alunos[aluno]
+    conn = get_connection()
+    df = pd.read_sql("""
+        SELECT treino, exercicio, series, repeticoes, carga
+        FROM treinos
+        WHERE aluno_id = ?
+        ORDER BY treino
+    """, conn, params=(aluno["id"],))
+    conn.close()
 
-    st.subheader(f"Aluno: {aluno}")
-    st.caption(f"Objetivo: {dados['objetivo']}")
+    st.caption(f"Objetivo: {aluno['objetivo']}")
 
-    for treino, exercicios in dados["treinos"].items():
-        st.markdown(f"### {treino}")
+    if df.empty:
+        st.info("Nenhum treino cadastrado.")
+        return
 
-        if exercicios:
-            df = pd.DataFrame(exercicios)
-            st.table(df)
+    st.dataframe(df, use_container_width=True)
 
-            if st.button(f"🗑️ Limpar {treino}", key=treino):
-                st.session_state.alunos[aluno]["treinos"][treino] = []
-                st.rerun()
-        else:
-            st.info("Nenhum exercício cadastrado.")
-
-    st.divider()
+    treinos_dict = df.groupby("treino").apply(
+        lambda x: x.to_dict("records")
+    ).to_dict()
 
     pdf_buffer = gerar_pdf(
-        aluno,
-        dados["objetivo"],
-        dados["treinos"]
+        aluno_nome,
+        aluno["objetivo"],
+        treinos_dict
     )
 
     st.download_button(
-        label="📄 Baixar ficha em PDF",
-        data=pdf_buffer,
-        file_name=f"ficha_{aluno}.pdf",
+        "📄 Baixar ficha em PDF",
+        pdf_buffer,
+        file_name=f"ficha_{aluno_nome}.pdf",
         mime="application/pdf"
     )
-
-def listar_alunos():
-    conn = get_connection()
-    df = pd.read_sql("SELECT * FROM alunos", conn)
-    conn.close()
-    return df
-    
-df = listar_alunos()
-st.dataframe(df)
 
 # =============================
 # MAIN
 # =============================
-
-  
 def main():
     st.title("🏋️ GymManager Pro")
 
